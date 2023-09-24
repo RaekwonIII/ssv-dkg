@@ -188,18 +188,18 @@ func TestDKG(t *testing.T) {
 	exch := map[uint64]*wire2.Transport{}
 
 	err := ts.ForAll(func(o *LocalOwner) error {
-		ts, err := o.Init(uid, init, nil)
+		ts, err := o.Init(uid, init)
 		if err != nil {
 			t.Error(t, err)
 		}
 		exch[o.ID] = ts
 		return nil
 	})
-
+	require.NoError(t, err)
 	err = ts.ForAll(func(o *LocalOwner) error {
 		return o.Broadcast(exch[o.ID])
 	})
-
+	require.NoError(t, err)
 	err = ts.ForAll(func(o *LocalOwner) error {
 		<-o.startedDKG
 		return nil
@@ -213,7 +213,7 @@ func TestDKG(t *testing.T) {
 		pubs[o.ID] = o.SecretShare.Public()
 		return nil
 	})
-
+	require.NoError(t, err)
 	var commits []kyber.Point
 	err = ts.ForAll(func(o *LocalOwner) error {
 		commits = o.SecretShare.Commits
@@ -301,22 +301,19 @@ func TestDKG(t *testing.T) {
 	exch2 := map[uint64]*wire2.Transport{}
 
 	err = ts2.ForAll(func(o *LocalOwner) error {
-		var secret kyber.Scalar
 		var share *dkg.DistKeyShare
-		//var secretShare
 		if oldop, ex := ts.ops[o.ID]; ex {
 			share = oldop.SecretShare
-			secret = oldop.Data.Secret
 		}
 		o.SecretShare = share
-		ts, err := o.Init(newuid, init2, secret)
+		ts, err := o.Init(newuid, init2)
 		if err != nil {
 			t.Error(t, err)
 		}
 		exch2[o.ID] = ts
 		return nil
 	})
-
+	require.NoError(t, err)
 	err = ts2.ForAll(func(o *LocalOwner) error {
 		return o.Broadcast(exch2[o.ID])
 	})

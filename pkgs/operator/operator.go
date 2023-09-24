@@ -4,7 +4,6 @@ import (
 	"crypto/rsa"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,8 +11,11 @@ import (
 
 	"github.com/bloxapp/ssv-dkg/pkgs/wire"
 	ssvspec_types "github.com/bloxapp/ssv-spec/types"
+	"github.com/bloxapp/ssv/storage/basedb"
+	"github.com/bloxapp/ssv/storage/kv"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/httprate"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
 
@@ -22,6 +24,7 @@ type Server struct {
 	HttpServer *http.Server
 	Router     chi.Router
 	State      *Switch
+	DB         *kv.BadgerDB
 }
 
 type KeySign struct {
@@ -120,13 +123,19 @@ func RegisterRoutes(s *Server) {
 	})
 }
 
-func New(key *rsa.PrivateKey, logger *zap.Logger) *Server {
+func New(key *rsa.PrivateKey, logger *zap.Logger, dbOptions basedb.Options) *Server {
 	r := chi.NewRouter()
-	swtch := NewSwitch(key, logger)
+	db, err := setupDB(logger, dbOptions)
+	swtch := NewSwitch(key, logger, db)
+	// todo: handle error
+	if err != nil {
+		panic(err)
+	}
 	s := &Server{
 		Logger: logger,
 		Router: r,
 		State:  swtch,
+		DB:     db,
 	}
 	RegisterRoutes(s)
 	return s
@@ -141,4 +150,12 @@ func (s *Server) Start(port uint16) error {
 
 func (s *Server) Stop() error {
 	return s.HttpServer.Close()
+}
+
+func setupDB(logger *zap.Logger, dbOptions basedb.Options) (*kv.BadgerDB, error) {
+	db, err := kv.New(logger, dbOptions)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to open db")
+	}
+	return db, nil
 }

@@ -2,6 +2,7 @@ package integration_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -18,6 +19,8 @@ import (
 	"github.com/herumi/bls-eth-go-binary/bls"
 
 	"github.com/bloxapp/ssv/logging"
+	"github.com/bloxapp/ssv/storage/basedb"
+	"github.com/bloxapp/ssv/storage/kv"
 	"github.com/bloxapp/ssv/utils/rsaencryption"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -42,7 +45,7 @@ type testOperator struct {
 }
 
 func CreateOperator(t *testing.T, id uint64) *testOperator {
-	if err := logging.SetGlobalLogger("info", "capital", "console", ""); err != nil {
+	if err := logging.SetGlobalLogger("debug", "capital", "console", ""); err != nil {
 		panic(err)
 	}
 	logger := zap.L().Named("integration-tests")
@@ -51,13 +54,20 @@ func CreateOperator(t *testing.T, id uint64) *testOperator {
 	priv, err := rsaencryption.ConvertPemToPrivateKey(string(pv))
 	require.NoError(t, err)
 	r := chi.NewRouter()
-	swtch := operator.NewSwitch(priv, logger)
 	lg := logrus.New()
 	lg.SetLevel(logrus.DebugLevel)
+	db, err := kv.NewInMemory(logging.TestLogger(t), basedb.Options{
+		Reporting: true,
+		Ctx:       context.Background(),
+		Path:      t.TempDir(),
+	})
+	require.NoError(t, err)
+	swtch := operator.NewSwitch(priv, logger, db)
 	s := &operator.Server{
 		Logger: logger,
 		Router: r,
 		State:  swtch,
+		DB:     db,
 	}
 	operator.RegisterRoutes(s)
 	sTest := httptest.NewServer(s.Router)
@@ -81,8 +91,8 @@ func TestHappyFlow(t *testing.T) {
 		ops[2] = initiator.Operator{Addr: srv2.srv.URL, ID: 2, PubKey: &srv2.privKey.PublicKey}
 		srv3 := CreateOperator(t, 3)
 		ops[3] = initiator.Operator{Addr: srv3.srv.URL, ID: 3, PubKey: &srv3.privKey.PublicKey}
-		srv4 := CreateOperator(t, 7)
-		ops[101] = initiator.Operator{Addr: srv4.srv.URL, ID: 101, PubKey: &srv4.privKey.PublicKey}
+		srv4 := CreateOperator(t, 4)
+		ops[4] = initiator.Operator{Addr: srv4.srv.URL, ID: 4, PubKey: &srv4.privKey.PublicKey}
 		// Initiator priv key
 		_, pv, err := rsaencryption.GenerateKeys()
 		require.NoError(t, err)
@@ -91,7 +101,7 @@ func TestHappyFlow(t *testing.T) {
 		clnt := initiator.New(priv, ops, logger)
 		withdraw := newEthAddress(t)
 		owner := newEthAddress(t)
-		depositData, ks, err := clnt.StartDKG(withdraw.Bytes(), []uint64{1, 2, 3, 101}, [4]byte{0, 0, 0, 0}, "mainnnet", owner, 0)
+		depositData, ks, err := clnt.StartDKG(withdraw.Bytes(), []uint64{1, 2, 3, 4}, [4]byte{0, 0, 0, 0}, "mainnnet", owner, 0)
 		require.NoError(t, err)
 		sharesDataSigned, err := hex.DecodeString(ks.Payload.Readable.Shares[2:])
 		require.NoError(t, err)
@@ -206,31 +216,30 @@ func TestReshareHappyFlow(t *testing.T) {
 		panic(err)
 	}
 	logger := zap.L().Named("integration-tests")
-	t.Run("test 4 operators reshare happy flow", func(t *testing.T) {
-		ops := make(map[uint64]initiator.Operator)
-		srv1 := CreateOperator(t, 1)
-		ops[1] = initiator.Operator{Addr: srv1.srv.URL, ID: 1, PubKey: &srv1.privKey.PublicKey}
-		srv2 := CreateOperator(t, 2)
-		ops[2] = initiator.Operator{Addr: srv2.srv.URL, ID: 2, PubKey: &srv2.privKey.PublicKey}
-		srv3 := CreateOperator(t, 3)
-		ops[3] = initiator.Operator{Addr: srv3.srv.URL, ID: 3, PubKey: &srv3.privKey.PublicKey}
-		srv4 := CreateOperator(t, 4)
-		ops[4] = initiator.Operator{Addr: srv4.srv.URL, ID: 4, PubKey: &srv4.privKey.PublicKey}
-		srv5 := CreateOperator(t, 5)
-		ops[5] = initiator.Operator{Addr: srv5.srv.URL, ID: 5, PubKey: &srv5.privKey.PublicKey}
-		srv6 := CreateOperator(t, 6)
-		ops[6] = initiator.Operator{Addr: srv6.srv.URL, ID: 6, PubKey: &srv6.privKey.PublicKey}
-		srv7 := CreateOperator(t, 7)
-		ops[7] = initiator.Operator{Addr: srv7.srv.URL, ID: 7, PubKey: &srv7.privKey.PublicKey}
-		// Initiator priv key
-		_, pv, err := rsaencryption.GenerateKeys()
-		require.NoError(t, err)
-		priv, err := rsaencryption.ConvertPemToPrivateKey(string(pv))
-		require.NoError(t, err)
+	var dkgResults []dkg.Result
+	var validatorPubKey *bls.PublicKey
+	// Initiator priv key
+	_, pv, err := rsaencryption.GenerateKeys()
+	require.NoError(t, err)
+	priv, err := rsaencryption.ConvertPemToPrivateKey(string(pv))
+	require.NoError(t, err)
+	var oldID [24]byte
+	ids := []uint64{1, 2, 3, 4}
+	ops := make(map[uint64]initiator.Operator)
+	srv1 := CreateOperator(t, 1)
+	ops[1] = initiator.Operator{Addr: srv1.srv.URL, ID: 1, PubKey: &srv1.privKey.PublicKey}
+	srv2 := CreateOperator(t, 2)
+	ops[2] = initiator.Operator{Addr: srv2.srv.URL, ID: 2, PubKey: &srv2.privKey.PublicKey}
+	srv3 := CreateOperator(t, 3)
+	ops[3] = initiator.Operator{Addr: srv3.srv.URL, ID: 3, PubKey: &srv3.privKey.PublicKey}
+	srv4 := CreateOperator(t, 4)
+	ops[4] = initiator.Operator{Addr: srv4.srv.URL, ID: 4, PubKey: &srv4.privKey.PublicKey}
+	srv5 := CreateOperator(t, 5)
+	ops[5] = initiator.Operator{Addr: srv5.srv.URL, ID: 5, PubKey: &srv5.privKey.PublicKey}
+	t.Run("get DKG result", func(t *testing.T) {
 		c := initiator.New(priv, ops, logger)
 		withdraw := newEthAddress(t)
 		owner := newEthAddress(t)
-		ids := []uint64{1, 2, 3, 4}
 		// depositData, ks, err := c.StartDKG(withdraw.Bytes(), []uint64{1, 2, 3, 101}, [4]byte{0, 0, 0, 0}, "mainnnet", owner, 0)
 		// compute threshold (3f+1)
 		threshold := len(ids) - ((len(ids) - 1) / 3)
@@ -265,6 +274,7 @@ func TestReshareHappyFlow(t *testing.T) {
 			InitiatorPublicKey:    pkBytes,
 		}
 		id := c.NewID()
+		oldID = id
 		results, err := c.SendInitMsg(init, id, parts)
 		require.NoError(t, err)
 		results, err = c.SendExchangeMsgs(results, id, parts)
@@ -272,22 +282,22 @@ func TestReshareHappyFlow(t *testing.T) {
 		dkgResult, err := c.SendKyberMsgs(results, id, parts)
 		require.NoError(t, err)
 		c.Logger.Info("Round 2. Finished successfully. Got DKG results")
-		dkgResults, validatorPubKey, _, _, _, err := c.ProcessDKGResultResponse(dkgResult, id)
+		dkgResults, validatorPubKey, _, _, _, err = c.ProcessDKGResultResponse(dkgResult, id)
 		require.NotNil(t, validatorPubKey)
 		require.NoError(t, err)
-		newIds := []uint64{5, 6, 7}
-		c = initiator.New(priv, ops, logger)
-		_, valPubReshare, err := c.StartReshare(id, ids, newIds, dkgResults[0].Commits)
+	})
+	t.Run("start resharing", func(t *testing.T) {
+		newIds := []uint64{5}
+		c := initiator.New(priv, ops, logger)
+		_, valPubReshare, err := c.StartReshare(oldID, ids, newIds, dkgResults[0].Commits)
 		require.NoError(t, err)
 		require.Equal(t, validatorPubKey.SerializeToHexStr(), valPubReshare.SerializeToHexStr())
-		srv1.srv.Close()
-		srv2.srv.Close()
-		srv3.srv.Close()
-		srv4.srv.Close()
-		srv5.srv.Close()
-		srv6.srv.Close()
-		srv7.srv.Close()
 	})
+	srv1.srv.Close()
+	srv2.srv.Close()
+	srv3.srv.Close()
+	srv4.srv.Close()
+	srv5.srv.Close()
 }
 func testSharesData(t *testing.T, ops map[uint64]initiator.Operator, keys []*rsa.PrivateKey, sharesData []byte, validatorPublicKey []byte, owner common.Address, nonce uint16) {
 	operatorCount := len(keys)

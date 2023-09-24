@@ -1,8 +1,6 @@
 package board
 
 import (
-	"fmt"
-
 	wire2 "github.com/bloxapp/ssv-dkg/pkgs/wire"
 	"github.com/drand/kyber/share/dkg"
 	"go.uber.org/zap"
@@ -32,16 +30,11 @@ func NewBoard(
 
 func (b *Board) PushDeals(bundle *dkg.DealBundle) {
 	b.logger.Debug("pushing deal bundle")
-	for _, d := range bundle.Deals {
-		b.logger.Debug(fmt.Sprintf("ShareIndex %d", d.ShareIndex))
-		b.logger.Debug(fmt.Sprintf("EncryptedShare %x", d.EncryptedShare))
-	}
 	byts, err := wire2.EncodeDealBundle(bundle)
 	if err != nil {
 		b.logger.Error(err.Error())
 		return
 	}
-
 	msg := &wire2.KyberMessage{
 		Type: wire2.KyberDealBundleMessageType,
 		Data: byts,
@@ -58,7 +51,7 @@ func (b *Board) IncomingDeal() <-chan dkg.DealBundle {
 }
 
 func (b *Board) PushResponses(bundle *dkg.ResponseBundle) {
-	b.logger.Info("pushing response bundle")
+	b.logger.Debug("pushing response bundle")
 
 	byts, err := wire2.EncodeResponseBundle(bundle)
 	if err != nil {
@@ -82,7 +75,7 @@ func (b *Board) IncomingResponse() <-chan dkg.ResponseBundle {
 }
 
 func (b *Board) PushJustifications(bundle *dkg.JustificationBundle) {
-	b.logger.Info("pushing justification bundle")
+	b.logger.Debug("pushing justification bundle")
 
 	byts, err := wire2.EncodeJustificationBundle(bundle)
 	if err != nil {

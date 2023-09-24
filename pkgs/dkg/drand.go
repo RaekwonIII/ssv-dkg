@@ -16,6 +16,7 @@ import (
 	"github.com/bloxapp/ssv-dkg/pkgs/utils"
 	"github.com/bloxapp/ssv-dkg/pkgs/wire"
 	ssvspec_types "github.com/bloxapp/ssv-spec/types"
+	"github.com/bloxapp/ssv/storage/kv"
 	"github.com/bloxapp/ssv/utils/rsaencryption"
 	"github.com/drand/kyber"
 	"github.com/drand/kyber/pairing"
@@ -86,6 +87,26 @@ func (msg *Result) Decode(data []byte) error {
 	return json.Unmarshal(data, msg)
 }
 
+type PriShare struct {
+	I int    `json:"index"`
+	V []byte `json:"secret_point"`
+}
+
+type DistKeyShare struct {
+	Commits []byte   `json:"commits"`
+	Share   PriShare `json:"secret_share"`
+}
+
+// Encode returns a msg encoded bytes or error
+func (msg *DistKeyShare) Encode() ([]byte, error) {
+	return json.Marshal(msg)
+}
+
+// Decode returns error if decoding failed
+func (msg *DistKeyShare) Decode(data []byte) error {
+	return json.Unmarshal(data, msg)
+}
+
 var ErrAlreadyExists = errors.New("duplicate message")
 
 type LocalOwner struct {
@@ -108,6 +129,7 @@ type LocalOwner struct {
 	Nonce              uint64
 	done               chan struct{}
 	InitiatorPublicKey *rsa.PublicKey
+	DB                 *kv.BadgerDB
 }
 
 type OwnerOpts struct {
@@ -121,6 +143,7 @@ type OwnerOpts struct {
 	Owner              [20]byte
 	Nonce              uint64
 	InitiatorPublicKey *rsa.PublicKey
+	DB                 *kv.BadgerDB
 }
 
 func New(opts OwnerOpts) *LocalOwner {
@@ -139,6 +162,7 @@ func New(opts OwnerOpts) *LocalOwner {
 		Owner:              opts.Owner,
 		Nonce:              opts.Nonce,
 		InitiatorPublicKey: opts.InitiatorPublicKey,
+		DB:                 opts.DB,
 	}
 	return owner
 }
@@ -182,7 +206,7 @@ func (o *LocalOwner) StartDKG() error {
 			})
 		}
 		var coefs []kyber.Point
-		coefsBytes := splitBytes(o.Data.init.Coefs, 48)
+		coefsBytes := utils.SplitBytes(o.Data.init.Coefs, 48)
 		for _, c := range coefsBytes {
 			p := o.suite.G1().Point()
 			err := p.UnmarshalBinary(c)
@@ -281,7 +305,31 @@ func (o *LocalOwner) PostDKG(res *dkg.OptionResult) error {
 	// Store result share a instance
 	// TODO: store DKG result at instance for now just as global variable
 	o.SecretShare = res.Result.Key
-
+	// encode priv share
+	secret := &DistKeyShare{}
+	var commits []byte
+	for _, point := range o.SecretShare.Commits {
+		b, _ := point.MarshalBinary()
+		commits = append(commits, b...)
+	}
+	secret.Commits = commits
+	secterPoint, err := o.SecretShare.Share.V.MarshalBinary()
+	if err != nil {
+		o.broadcastError(err)
+		return err
+	}
+	secret.Share.V = secterPoint
+	secret.Share.I = o.SecretShare.Share.I
+	bin, err := secret.Encode()
+	if err != nil {
+		o.broadcastError(err)
+		return err
+	}
+	err = o.DB.Set([]byte("secret"), o.Data.ReqID[:], bin)
+	if err != nil {
+		o.broadcastError(err)
+		return err
+	}
 	// Get validator BLS public key from result
 	validatorPubKey, err := crypto.ResultToValidatorPK(res.Result, o.suite.G1().(dkg.Suite))
 	if err != nil {
@@ -367,12 +415,6 @@ func (o *LocalOwner) PostDKG(res *dkg.OptionResult) error {
 		return fmt.Errorf("partial owner + nonce signature isnt valid %x", sigOwnerNonce.Serialize())
 	}
 	o.Logger.Debug(fmt.Sprintf("SSV owner + nonce signature  %x", sigOwnerNonce.Serialize()))
-	var commits []byte
-	for _, point := range res.Result.Key.Commits {
-		o.Logger.Debug(fmt.Sprintf("Commit point  %s", point.String()))
-		b, _ := point.MarshalBinary()
-		commits = append(commits, b...)
-	}
 	out := Result{
 		RequestID:                  o.Data.ReqID,
 		EncryptedShare:             ciphertext,
@@ -402,7 +444,7 @@ func (o *LocalOwner) PostDKG(res *dkg.OptionResult) error {
 	return nil
 }
 
-func (o *LocalOwner) Init(reqID [24]byte, init *wire.Init, secret kyber.Scalar) (*wire.Transport, error) {
+func (o *LocalOwner) Init(reqID [24]byte, init *wire.Init) (*wire.Transport, error) {
 	if o.Data == nil {
 		o.Data = &DKGData{}
 	}
@@ -434,24 +476,14 @@ func (o *LocalOwner) Init(reqID [24]byte, init *wire.Init, secret kyber.Scalar) 
 			return nil
 		},
 	)
-	if secret != nil {
-		o.Data.Secret = secret
-		pk := o.suite.G1().Point().Mul(secret, nil)
-		bts, _, err := CreateExchange(pk)
-		if err != nil {
-			return nil, err
-		}
-		return ExchangeWireMessage(bts, reqID), nil
-	} else {
-		eciesSK, pk := InitSecret(o.suite)
-		o.Data.Secret = eciesSK
-		// check if we are running resharing protocol
-		bts, _, err := CreateExchange(pk)
-		if err != nil {
-			return nil, err
-		}
-		return ExchangeWireMessage(bts, reqID), nil
+	eciesSK, pk := InitSecret(o.suite)
+	o.Data.Secret = eciesSK
+	// check if we are running resharing protocol
+	bts, _, err := CreateExchange(pk)
+	if err != nil {
+		return nil, err
 	}
+	return ExchangeWireMessage(bts, reqID), nil
 }
 
 func (o *LocalOwner) processDKG(from uint64, msg *wire.Transport) error {
@@ -615,17 +647,4 @@ func (o *LocalOwner) VerifyInitiatorMessage(msg []byte, sig []byte) error {
 
 func (o *LocalOwner) GetLocalOwner() *LocalOwner {
 	return o
-}
-
-func splitBytes(buf []byte, lim int) [][]byte {
-	var chunk []byte
-	chunks := make([][]byte, 0, len(buf)/lim+1)
-	for len(buf) >= lim {
-		chunk, buf = buf[:lim], buf[lim:]
-		chunks = append(chunks, chunk)
-	}
-	if len(buf) > 0 {
-		chunks = append(chunks, buf[:])
-	}
-	return chunks
 }
