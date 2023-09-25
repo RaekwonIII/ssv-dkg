@@ -1,6 +1,7 @@
 package dkg
 
 import (
+	"context"
 	"crypto/rsa"
 	"fmt"
 	mrand "math/rand"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/bloxapp/ssv-dkg/pkgs/crypto"
 	wire2 "github.com/bloxapp/ssv-dkg/pkgs/wire"
+	"github.com/bloxapp/ssv/storage/basedb"
+	"github.com/bloxapp/ssv/storage/kv"
 	"github.com/drand/kyber"
 	bls "github.com/drand/kyber-bls12381"
 	"github.com/drand/kyber/share/dkg"
@@ -89,17 +92,21 @@ func NewTestOperator(ts *testState) *LocalOwner {
 	if err != nil {
 		ts.T.Error(err)
 	}
-
 	ts.tv.Add(id, pk)
-
 	sign := func(d []byte) ([]byte, error) {
 		return crypto.SignRSA(pv, d)
 	}
-
 	ver := ts.tv.Verify
-
 	logger, _ := zap.NewDevelopment()
 	logger = logger.With(zap.Uint64("id", id))
+	db, err := kv.NewInMemory(logger, basedb.Options{
+		Reporting: true,
+		Ctx:       context.Background(),
+		Path:      ts.T.TempDir(),
+	})
+	if err != nil {
+		ts.T.Error(err)
+	}
 	return &LocalOwner{
 		Logger:    logger,
 		ID:        id,
@@ -113,8 +120,8 @@ func NewTestOperator(ts *testState) *LocalOwner {
 		OpPrivKey:  pv,
 		done:       make(chan struct{}, 1),
 		startedDKG: make(chan struct{}, 1),
+		DB:         db,
 	}
-
 }
 
 func AddExistingOperator(ts *testState, owner *LocalOwner) *LocalOwner {
@@ -143,6 +150,7 @@ func AddExistingOperator(ts *testState, owner *LocalOwner) *LocalOwner {
 		OpPrivKey:  pv,
 		done:       make(chan struct{}, 1),
 		startedDKG: make(chan struct{}, 1),
+		DB:         owner.DB,
 	}
 
 }
