@@ -566,7 +566,7 @@ func (c *Initiator) StartReshare(oldRequestID [24]byte, oldIds []uint64, newIds 
 	}
 
 	// compute new threshold (3f+1)
-	newThreshold := len(append(oldIds, newIds...)) - ((len(append(oldIds, newIds...)) - 1) / 3)
+	newThreshold := len(newIds) - ((len(newIds) - 1) / 3)
 	newParts := make([]*wire.Operator, 0)
 	for _, id := range newIds {
 		op, ok := c.Operators[id]

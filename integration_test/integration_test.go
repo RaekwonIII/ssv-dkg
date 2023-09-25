@@ -236,6 +236,14 @@ func TestReshareHappyFlow(t *testing.T) {
 	ops[4] = initiator.Operator{Addr: srv4.srv.URL, ID: 4, PubKey: &srv4.privKey.PublicKey}
 	srv5 := CreateOperator(t, 5)
 	ops[5] = initiator.Operator{Addr: srv5.srv.URL, ID: 5, PubKey: &srv5.privKey.PublicKey}
+	srv6 := CreateOperator(t, 6)
+	ops[6] = initiator.Operator{Addr: srv6.srv.URL, ID: 6, PubKey: &srv6.privKey.PublicKey}
+	srv7 := CreateOperator(t, 7)
+	ops[7] = initiator.Operator{Addr: srv7.srv.URL, ID: 7, PubKey: &srv7.privKey.PublicKey}
+	srv8 := CreateOperator(t, 8)
+	ops[8] = initiator.Operator{Addr: srv8.srv.URL, ID: 8, PubKey: &srv8.privKey.PublicKey}
+	srv9 := CreateOperator(t, 9)
+	ops[9] = initiator.Operator{Addr: srv9.srv.URL, ID: 9, PubKey: &srv9.privKey.PublicKey}
 	t.Run("get DKG result", func(t *testing.T) {
 		c := initiator.New(priv, ops, logger)
 		withdraw := newEthAddress(t)
@@ -287,7 +295,7 @@ func TestReshareHappyFlow(t *testing.T) {
 		require.NoError(t, err)
 	})
 	t.Run("start resharing", func(t *testing.T) {
-		newIds := []uint64{5}
+		newIds := []uint64{5, 6, 7, 8, 9}
 		c := initiator.New(priv, ops, logger)
 		_, valPubReshare, err := c.StartReshare(oldID, ids, newIds, dkgResults[0].Commits)
 		require.NoError(t, err)

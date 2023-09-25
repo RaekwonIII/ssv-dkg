@@ -215,19 +215,33 @@ func (o *LocalOwner) StartDKG() error {
 			}
 			coefs = append(coefs, p)
 		}
-		o.Logger.Debug(fmt.Sprintf("Staring Reshare with nodes %v", append(OldNodes, NewNodes...)))
-		config = &wire.Config{
-			Identifier:   o.Data.ReqID[:],
-			Secret:       o.Data.Secret,
-			OldNodes:     OldNodes,
-			NewNodes:     append(OldNodes, NewNodes...),
-			Suite:        o.suite,
-			T:            int(o.Data.init.T),
-			NewT:         int(o.Data.init.NewT),
-			Board:        o.b,
-			PublicCoeffs: coefs,
-			Share:        o.SecretShare,
-			Logger:       o.Logger,
+		o.Logger.Debug(fmt.Sprintf("Staring Reshare with new nodes %v", NewNodes))
+		if o.SecretShare != nil {
+			config = &wire.Config{
+				Identifier: o.Data.ReqID[:],
+				Secret:     o.Data.Secret,
+				OldNodes:   OldNodes,
+				NewNodes:   NewNodes,
+				Suite:      o.suite,
+				T:          int(o.Data.init.T),
+				NewT:       int(o.Data.init.NewT),
+				Board:      o.b,
+				Share:      o.SecretShare,
+				Logger:     o.Logger,
+			}
+		} else {
+			config = &wire.Config{
+				Identifier:   o.Data.ReqID[:],
+				Secret:       o.Data.Secret,
+				OldNodes:     OldNodes,
+				NewNodes:     NewNodes,
+				Suite:        o.suite,
+				T:            int(o.Data.init.T),
+				NewT:         int(o.Data.init.NewT),
+				Board:        o.b,
+				PublicCoeffs: coefs,
+				Logger:       o.Logger,
+			}
 		}
 	} else {
 		nodes := make([]dkg.Node, 0)
@@ -289,9 +303,6 @@ func (o *LocalOwner) Broadcast(ts *wire.Transport) error {
 	if err != nil {
 		return err
 	}
-
-	o.Logger.Debug(fmt.Sprintf("responding with a signed message, msg:%v", hex.EncodeToString(final)))
-
 	return o.BroadcastF(final)
 }
 

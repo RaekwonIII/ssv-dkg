@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rsa"
 	"fmt"
-	mrand "math/rand"
 	"testing"
 	"time"
 
@@ -81,13 +80,7 @@ func (ts *testState) ForAll(f func(o *LocalOwner) error) error {
 	return nil
 }
 
-func NewTestOperator(ts *testState) *LocalOwner {
-	id := uint64(mrand.Int63n(13))
-	_, exists := ts.ops[id]
-	for exists || id == 0 {
-		id = uint64(mrand.Int63n(13))
-		_, exists = ts.ops[id]
-	}
+func NewTestOperator(ts *testState, id uint64) *LocalOwner {
 	pv, pk, err := crypto.GenerateKeys()
 	if err != nil {
 		ts.T.Error(err)
@@ -166,8 +159,8 @@ func TestDKG(t *testing.T) {
 		tv:  newTestVerify(),
 	}
 
-	for i := 0; i < n; i++ {
-		op := NewTestOperator(ts)
+	for i := 1; i <= n; i++ {
+		op := NewTestOperator(ts, uint64(i))
 		ts.ops[op.ID] = op
 	}
 
@@ -262,12 +255,12 @@ func TestDKG(t *testing.T) {
 	}
 
 	var newops []uint64
-	newopsArr := make([]*wire2.Operator, 0, len(ts2.tv.ops))
+	newopsArr := make([]*wire2.Operator, 0)
 	//newopsArr = append(newopsArr, opsarr...)
 	//spew.Dump(newopsArr)
 
-	for i := 0; i < n; i++ {
-		op := NewTestOperator(ts2)
+	for i := n + 1; i <= n+5; i++ {
+		op := NewTestOperator(ts2, uint64(i))
 		ts2.ops[op.ID] = op
 		newops = append(newops, op.ID)
 	}
@@ -282,23 +275,23 @@ func TestDKG(t *testing.T) {
 		})
 	}
 
-	fmt.Println("############################################## OPERATOPR ")
-	fmt.Println("############################################## OLD OPERATOPR ")
+	fmt.Println("############################################## OPERATOR ")
+	fmt.Println("############################################## OLD OPERATOR ")
 	for _, i := range opsarr {
 		fmt.Println(i.ID)
 	}
-	fmt.Println("############################################## NEW OPERATOPR ")
+	fmt.Println("############################################## NEW OPERATOR ")
 	for _, i := range newopsArr {
 		fmt.Println(i.ID)
 	}
-	fmt.Println("############################################## OPERATOPR ")
+	fmt.Println("############################################## OPERATOR ")
 
 	init2 := &wire2.Init{
 		Operators:             opsarr,
 		NewOperators:          newopsArr,
 		OldID:                 uid,
 		T:                     3,
-		NewT:                  6,
+		NewT:                  4,
 		WithdrawalCredentials: []byte("0x0000"),
 		Fork:                  [4]byte{0, 0, 0, 0},
 		Nonce:                 0,
@@ -340,7 +333,7 @@ func TestDKG(t *testing.T) {
 		newPubs[o.ID] = o.SecretShare.Public()
 		return nil
 	})
-
+	require.NoError(t, err)
 	// Print old pubs
 	var resPub kyber.Point
 	for id, pub := range pubs {
@@ -365,7 +358,7 @@ func TestForALL(t *testing.T) {
 	}
 
 	for i := 0; i < n; i++ {
-		op := NewTestOperator(ts)
+		op := NewTestOperator(ts, uint64(i))
 		ts.ops[op.ID] = op
 	}
 
